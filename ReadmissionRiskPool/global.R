@@ -106,7 +106,8 @@ risk_pool <-
   tibble(
     PatientID = 1:n_patients,
     DaysSinceDischarge = sample(0:30, n_patients, replace = TRUE),
-    ClinicalRisk = 1 / (1 + exp(-rnorm(n_patients, mean = -3)))
+    ClinicalRisk = 1 / (1 + exp(-rnorm(n_patients, mean = -3))),
+    CurrentRisk = 1 / (1 + exp(-rnorm(n_patients, mean = -3.5)))
   ) |>
   
   # Join to get all zip codes

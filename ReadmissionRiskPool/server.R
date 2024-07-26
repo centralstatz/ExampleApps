@@ -26,7 +26,11 @@ shinyServer(function(input, output, session) {
       exp_readmits <- ceiling(sum(current_risk_pool()$ClinicalRisk))
       exp_rate <- round(100 * exp_readmits / nrow(current_risk_pool()), 1)
       
-      HTML(paste0("<h4 style = 'text-align: center'>Expected Readmissions As Of <span style = 'font-size: 14px;'><br>Discharge &rarr; </span> <span style = 'color: red; font-size: 14px;'>", exp_readmits, " (", exp_rate ,"%)</span><span style = 'font-size: 14px;'><br> Now &rarr; X (X%) </span> </h6>"))
+      # Compute the expected readmission count/rate (based on current risk)
+      cur_readmits <- ceiling(sum(current_risk_pool()$CurrentRisk))
+      cur_rate <- round(100 * cur_readmits / nrow(current_risk_pool()), 1)
+      
+      HTML(paste0("<h4 style = 'text-align: center'>Expected Readmissions As Of <span style = 'font-size: 14px;'><br>Discharge &rarr; </span> <span style = 'color: red; font-size: 14px;'>", exp_readmits, " (", exp_rate ,"%)</span><span style = 'font-size: 14px;'><br> Now &rarr; </span> <span style = 'color: green; font-size: 14px;'>", cur_readmits, " (", cur_rate ,"%) </span> </h6>"))
     })
   
   # Risk pool distribution
@@ -145,11 +149,12 @@ shinyServer(function(input, output, session) {
         popup = 
           ~paste0(
             "Patient ID: ", PatientID,
+            "<br>Current readmission risk: ", round(CurrentRisk*100,1), "%",
             "<br>Discharge readmission risk: ", round(ClinicalRisk*100,1), "%",
             "<br>Days since discharge: ", DaysSinceDischarge,
             "<br>Days left in risk pool: ", 30 - DaysSinceDischarge
           ),
-        color = ~pal(-1*ClinicalRisk),
+        color = ~pal(-1*CurrentRisk),
         fillOpacity = .75
       )
   })
