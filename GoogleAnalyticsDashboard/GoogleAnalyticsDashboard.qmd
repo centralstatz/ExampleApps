@@ -1,0 +1,350 @@
+--- 
+title: "`r paste0('Google Analytics - ', format(Sys.Date(), '%b %Y'))`"
+subtitle: "zajichekstats.com"
+format: 
+  dashboard:
+    logo: images/icon.png
+    nav-buttons: 
+      - icon: laptop
+        href: https://www.zajichekstats.com/
+      - icon: github
+        href: https://github.com/zajichek/zajichek
+    theme: custom.scss
+--- 
+
+```{r}
+# Load packages
+library(tidyverse)
+library(plotly)
+library(googleAnalyticsR)
+library(reactable)
+library(leaflet)
+library(lubridate)
+
+# Connect to GA
+ga_auth(json_file = "credentials.json")
+
+# Extract property info
+my_account <- ga_account_list("ga4")
+
+# Extract the property I want
+my_prop <- my_account |> filter(property_name == "zajichekstats") |> pull("propertyId")
+
+# Set date range
+date_end <- Sys.Date()
+date_start <- floor_date(date_end, unit = "month")
+
+```
+
+## Row {height = 60%}
+
+```{r}
+#| title: Cumulative hourly session volume and engagement
+
+# Query the plotting data
+plot1_dat <-
+  ga_data(
+    propertyId = my_prop,
+    metrics = c("sessions", "engagedSessions", "averageSessionDuration"),
+    dimensions = "dateHour",
+    date_range = c(date_start, date_end) |> as.character(),
+    limit = -1
+  )
+
+# Make the plot
+plot1 <- 
+  plot1_dat |>
+  
+  # Compute the engagement rate; parse date/time
+  mutate(
+    EngagementRate = engagedSessions / sessions,
+    Time = parse_date_time(dateHour, orders = "%Y%m%d%H")
+  ) |>
+  
+  # Send down the rows
+  pivot_longer(
+    cols = c(sessions, engagedSessions),
+    names_to = "Type",
+    values_to = "Count"
+  ) |>
+  
+  # Clean up names
+  mutate(
+    Type = 
+      case_match(
+        Type,
+        "sessions" ~ "Total Sessions",
+        "engagedSessions" ~ "Engaged Sessions"
+      )
+  ) |>
+  
+  # Compute cumulative counts
+  arrange(
+    Time
+  ) |>
+  mutate(
+    Count = cumsum(Count),
+    .by = Type
+  ) |>
+  
+  # Make a plot
+  ggplot(
+    aes(
+      x = Time,
+      y = Count,
+      fill = Type,
+      color = Type,
+      group = Type,
+      text = 
+        paste0(
+          "Date: ", Time,
+          "<br>", Type, ": ", Count,
+          "<br>Engagement Rate (%): ", round(100 * EngagementRate, 1), "%",
+          "<br>Avg. Duration (minutes): ", round(averageSessionDuration / 60, 1)
+        )
+    )
+  ) + 
+  geom_line(
+    linewidth = 1,
+    position = "identity"
+  ) +
+  geom_ribbon(
+    aes(
+      ymin = 0,
+      ymax = Count
+    ),
+    alpha = .2
+  ) +
+  scale_fill_manual(
+    values = c("#bfa900", "#004163")
+  ) +
+  scale_color_manual(
+    values = c("#bfa900", "#004163")
+  ) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major.y = element_line(color = "gray"),
+    legend.position = "none",
+    axis.title.x = element_blank()
+  ) +
+  ylab("Session Count")
+
+# Make the plot interactive
+ggplotly(
+  p = plot1,
+  tooltip = "text"
+)
+
+```
+
+## Row {height = 40%}
+
+### Column {.tabset}
+
+```{r}
+#| title: Top pages
+
+# Extract counts my page views
+plot2_dat <- 
+  ga_data(
+    propertyId = my_prop,
+    metrics = c("sessions", "engagedSessions", "averageSessionDuration"),
+    dimensions = "unifiedScreenName",
+    date_range = c(date_start, date_end) |> as.character(),
+    limit = -1
+  ) |>
+  
+  # Clean names
+  mutate(
+    Label = 
+      unifiedScreenName |>
+      str_remove(pattern = "\\s[|].+$")
+  )
+
+plot2_dat |>
+  
+  # Keep top 5 rows
+  slice_max(
+    order_by = sessions,
+    n = 5,
+    with_ties = FALSE
+  ) |>
+  
+  # Keep a few columns
+  transmute(
+    Rank = 1:5,
+    Name = Label,
+    Sessions = sessions,
+    EngagedSessions = engagedSessions,
+    EngagementRate = engagedSessions / sessions,
+    Duration = averageSessionDuration / 60
+  ) |>
+  
+  # Make a table
+  reactable(
+    columns = 
+      list(
+        Rank = colDef(name = "Page Rank"),
+        Sessions = colDef(align = "center"),
+        EngagedSessions = colDef(name = "Engaged Sessions", align = "center"),
+        EngagementRate = colDef(name = "Engaged Rate (%)", align = "center", format = colFormat(digits = 1, percent = TRUE)),
+        Duration = colDef(name = "Avg. Duration (minutes)", align = "center", format = colFormat(digits = 2))
+      ),
+    resizable = TRUE,
+    striped = TRUE,
+    highlight = TRUE,
+    bordered = TRUE,
+    theme = reactableTheme(
+      borderColor = "#004163",
+      stripedColor = "#c2c2c2",
+      highlightColor = "#bfa900",
+      cellPadding = "8px 12px",
+      style = list(
+        fontFamily = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+      ),
+      searchInputStyle = list(width = "100%")
+    )
+  )
+
+```
+
+```{r}
+#| title: Bottom pages
+
+plot2_dat |>
+  
+  # Add the rank
+  mutate(
+    Rank = order(order(sessions, decreasing = TRUE))
+  ) |>
+  
+  # Keep bottom 5 rows
+  slice_max(
+    order_by = Rank,
+    n = 5,
+    with_ties = FALSE
+  ) |>
+  
+  # Arrange
+  arrange(desc(Rank)) |>
+  
+  # Keep a few columns
+  transmute(
+    Rank,
+    Name = Label,
+    Sessions = sessions,
+    EngagedSessions = engagedSessions,
+    EngagementRate = engagedSessions / sessions,
+    Duration = averageSessionDuration / 60
+  ) |>
+  
+  # Make a table
+  reactable(
+    columns = 
+      list(
+        Rank = colDef(name = "Page Rank"),
+        Sessions = colDef(align = "center"),
+        EngagedSessions = colDef(name = "Engaged Sessions", align = "center"),
+        EngagementRate = colDef(name = "Engaged Rate (%)", align = "center", format = colFormat(digits = 1, percent = TRUE)),
+        Duration = colDef(name = "Avg. Duration (minutes)", align = "center", format = colFormat(digits = 2))
+      ),
+    resizable = TRUE,
+    striped = TRUE,
+    highlight = TRUE,
+    bordered = TRUE,
+    theme = reactableTheme(
+      borderColor = "#004163",
+      stripedColor = "#c2c2c2",
+      highlightColor = "#bfa900",
+      cellPadding = "8px 12px",
+      style = list(
+        fontFamily = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+      ),
+      searchInputStyle = list(width = "100%")
+    )
+  )
+
+```
+
+### Column
+
+```{r, include = FALSE}
+# Extract geographic data
+plot3_dat <-
+  ga_data(
+    propertyId = my_prop,
+    metrics = c("sessions", "engagedSessions", "averageSessionDuration"),
+    dimensions = c("country", "region"),
+    date_range = c(date_start, date_end) |> as.character(),
+    limit = -1
+  )
+
+# Get state coordinates
+state_dat <- tigris::states()
+
+# Mapping data
+map_dat <- 
+  plot3_dat |>
+  
+  # Filter to united states
+  filter(country == "United States") |>
+  select(-country) |> 
+  
+  # Join to get geographics
+  inner_join(
+    y = state_dat,
+    by = c("region" = "NAME")
+  )
+
+# Make a color pallete
+pal <- colorNumeric(palette = "plasma", domain =  map_dat$sessions)
+```
+
+```{r}
+#| title: Usage by US State
+
+# Make map
+leaflet() |>
+  
+  # Set the default view/zoom level
+  setView(
+    lng = -89.619018,
+    lat = 44.597088,
+    zoom = 5
+  ) |>
+  addTiles() |>
+  
+  # Add county outlines
+  addPolygons(
+    data = sf::st_as_sf(map_dat),
+    color = "black",
+    fillColor = pal(map_dat$sessions),
+    weight = 1,
+    opacity = .5,
+    fillOpacity = .35,
+    highlightOptions = 
+      highlightOptions(
+        color = "black",
+        weight = 3,
+        bringToFront = FALSE
+      ),
+    label = ~region,
+    popup = 
+      ~paste0(
+        "State: ", region,
+        "<br>Sessions: ", sessions,
+        "<br>Engaged Sessions: ", engagedSessions,
+        "<br>Engagement Rate (%): ", round(100*engagedSessions/sessions,1), "%",
+        "<br>Avg. Duration (minutes): ", round(averageSessionDuration/60, 1)
+      )
+  ) |>
+  
+  # Make a legend
+  addLegend(
+    pal = pal, 
+    values = map_dat$sessions,
+    position = "bottomright",
+    title = "Session Count"
+  )
+  
+```
